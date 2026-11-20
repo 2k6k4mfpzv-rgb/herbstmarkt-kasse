@@ -142,6 +142,9 @@
 // Der Schlüssel ist öffentlich gedacht. Geschützt sind die Daten durch den Stand-Code.
 const CONFIG = { url: 'https://vlxakezdhoqosjpuvtdx.supabase.co', key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZseGFrZXpkaG9xb3NqcHV2dGR4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUxODEzNTAsImV4cCI6MjExMDc1NzM1MH0.W4X7RF2JTGesvnt2oLcA47wJ11qzGL1sV3smE5cgBPE' };
 
+// Bei jeder Änderung hochzählen: Geräte laden die neue Version dann von selbst.
+const VERSION = '5';
+
 const STATIONS = { crepe: 'Crêpes', popcorn: 'Popcorn' };
 const eur = v => Number(v).toFixed(2).replace('.', ',') + ' €';
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -455,6 +458,7 @@ function renderSetup() {
       ${online ? `<div class="row"><span>Stand-Code</span>
         <input type="password" value="${esc(code())}" onchange="localStorage.setItem('standcode',this.value);this.blur();refresh()" style="width:160px"></div>`
         : '<div class="row"><span>Testmodus</span><span class="right">Daten nur in diesem Browser</span></div>'}
+      <div class="row"><span>Version</span><span class="right">${VERSION}</span></div>
       <div class="row"><div>Testbestellungen löschen<small>Vor dem Markt. Die Nummern starten wieder bei 1.</small></div>
         <button class="btn inline danger" onclick="clearAll()">Alle löschen</button></div>
     </div>`;
@@ -525,8 +529,21 @@ document.querySelectorAll('#nav button').forEach(b => b.onclick = () => {
   localStorage.setItem('view', view); history.replaceState(null, '', '#' + view);
   render();
 });
+// Neue Version online? Dann neu laden, sobald gerade niemand etwas eintippt.
+// Wichtig für das Symbol auf dem Home-Bildschirm: Dort gibt es keinen Neu-laden-Knopf.
+async function checkUpdate() {
+  try {
+    const html = await (await fetch(location.pathname + '?check=' + Date.now(), { cache: 'no-store' })).text();
+    const v = (html.match(/const VERSION = '([^']+)'/) || [])[1];
+    if (v && v !== VERSION && !cart.length && !draft && !busy()) location.replace(location.pathname + '?v=' + v + location.hash);
+  } catch (e) { /* offline: später nochmal */ }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { checkUpdate(); refresh(); } });
+
 refresh();
+checkUpdate();
 setInterval(refresh, 2000);
+setInterval(checkUpdate, 60000);
 </script>
 </body>
 </html>
