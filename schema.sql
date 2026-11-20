@@ -56,5 +56,18 @@ insert into settings default values;
 -- Bestellung an den Kunden ausgegeben (ergänzt 20.11.2026)
 alter table orders add column handed_out_at timestamptz;
 
+-- Lösch-Code für „Alle Bestellungen löschen“ (ergänzt 20.11.2026, ersetzt reset_orders() ohne Code)
+alter table config add column admin_code text;
+drop function reset_orders();
+create function reset_orders(admin text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not stand_code_ok() then raise exception 'Stand-Code falsch'; end if;
+  if admin is distinct from (select admin_code from config limit 1) then raise exception 'Lösch-Code falsch'; end if;
+  truncate orders restart identity;
+end $$;
+grant execute on function reset_orders(text) to anon;
+-- update config set admin_code = 'DEIN-LÖSCH-CODE';
+
 -- Stand-Code festlegen (nicht hier im Code speichern, beim Ausführen eintragen):
 -- insert into config values ('DEIN-CODE');
