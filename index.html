@@ -143,7 +143,7 @@
 const CONFIG = { url: 'https://vlxakezdhoqosjpuvtdx.supabase.co', key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZseGFrZXpkaG9xb3NqcHV2dGR4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUxODEzNTAsImV4cCI6MjExMDc1NzM1MH0.W4X7RF2JTGesvnt2oLcA47wJ11qzGL1sV3smE5cgBPE' };
 
 // Bei jeder Änderung hochzählen: Geräte laden die neue Version dann von selbst.
-const VERSION = '5';
+const VERSION = '6';
 
 const STATIONS = { crepe: 'Crêpes', popcorn: 'Popcorn' };
 const eur = v => Number(v).toFixed(2).replace('.', ',') + ' €';
@@ -181,12 +181,16 @@ const local = {
 };
 
 const db = online ? {
-  load: async () => ({
-    ok: await rest('rpc/stand_code_ok', { method: 'POST', body: '{}' }) || (() => { throw new Error('Stand-Code'); })(),
-    products: await rest('products?select=*&order=sort,id'),
-    orders: await rest('orders?select=*&order=id'),
-    float: Number((await rest('settings?select=float'))[0]?.float || 0)
-  }),
+  load: async () => {
+    const [ok, products, orders, settings] = await Promise.all([
+      rest('rpc/stand_code_ok', { method: 'POST', body: '{}' }),
+      rest('products?select=*&order=sort,id'),
+      rest('orders?select=*&order=id'),
+      rest('settings?select=float')
+    ]);
+    if (!ok) throw new Error('Stand-Code');
+    return { products, orders, float: Number(settings[0]?.float || 0) };
+  },
   addOrder: async o => (await rest('orders', { method: 'POST', body: JSON.stringify(o) }))[0],
   updateOrder: (id, p) => rest('orders?id=eq.' + id, { method: 'PATCH', body: JSON.stringify(p) }),
   saveProduct: p => p.id
@@ -223,12 +227,17 @@ const parseEuro = s => { const t = String(s).trim().replace(',', '.'); return t 
 const busy = () => document.activeElement && document.activeElement.matches('input');
 const sorted = () => [...state.products].sort((a, b) => a.sort - b.sort || a.id - b.id);
 
+let loadNr = 0;
 async function refresh() {
+  const nr = ++loadNr;
   try {
-    state = await db.load();
+    const fresh = await db.load();
+    if (nr !== loadNr) return;   // inzwischen neuer geladen: alte Antwort verwerfen
+    state = fresh;
     setStatus(online ? 'Verbunden' : 'Testmodus', online ? '' : 'test');
     if (!busy()) render();
   } catch (e) {
+    if (nr !== loadNr) return;
     const wrongCode = /Stand-Code|row-level/.test(e.message);
     setStatus(wrongCode ? 'Stand-Code fehlt' : 'Keine Verbindung', 'err');
     if (wrongCode && !busy()) document.getElementById('app').innerHTML = renderCode();
@@ -242,6 +251,12 @@ function toast(text, undoLabel, onUndo) {
   if (undoLabel) t.querySelector('button').onclick = () => { t.innerHTML = ''; onUndo(); };
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => t.innerHTML = '', 6000);
+}
+
+// Führt eine Änderung aus. Klappt sie nicht (z. B. WLAN weg), sagt die App es, statt still nichts zu tun.
+async function safe(fn) {
+  try { await fn(); } catch (e) { toast('Keine Verbindung. Bitte nochmal tippen.'); }
+  refresh();
 }
 
 function render() {
@@ -289,7 +304,7 @@ function renderKasse() {
         .filter(([st]) => itemsFor(o, st).length)
         .map(([st, l]) => `<span class="pill ${o[st + '_done_at'] ? 'ok' : ''}">${l} ${o[st + '_done_at'] ? 'fertig' : 'in Arbeit'}</span>`).join('')}</div>
       <small>${o.items.map(i => i.qty + '× ' + esc(i.name)).join(', ')}</small></div>
-      <div class="acts">${ready(o) ? `<button class="btn inline dark" onclick="handOut(${o.id},true)">Ausgegeben</button>` : ''}
+      <div class="acts"><button class="btn inline ${ready(o) ? 'dark' : ''}" onclick="handOut(${o.id},true)">Ausgegeben</button>
         <button class="btn inline danger" onclick="cancelOrder(${o.id})">Stornieren</button></div></div>`).join('');
   return `<div class="kasse">
     <div>${groups || '<p class="hint">Noch keine Sorten. Leg sie unter „Sorten“ an.</p>'}</div>
@@ -341,10 +356,10 @@ function addToCart(id) {
   const p = state.products.find(x => x.id === id);
   const line = cart.find(i => i.id === id);
   if (line) line.qty++; else cart.push({ id, name: p.name, price: Number(p.price), station: p.station, qty: 1 });
-  lastOrder = null;
+  lastOrder = null; given = null;   // Summe hat sich geändert: Gegeben neu wählen
   render();
 }
-function changeQty(n, d) { cart[n].qty += d; if (cart[n].qty <= 0) cart.splice(n, 1); if (!cart.length) given = null; render(); }
+function changeQty(n, d) { cart[n].qty += d; if (cart[n].qty <= 0) cart.splice(n, 1); given = null; render(); }
 function clearCart() { cart = []; given = null; render(); }
 function setGiven(v) { given = v; render(); }
 function typeGiven(s) {
@@ -370,9 +385,13 @@ async function placeOrder() {
 }
 
 async function handOut(id, val) {
-  await db.updateOrder(id, { handed_out_at: val ? new Date().toISOString() : null });
-  if (val) toast(`Nr. ${id} ausgegeben`, 'Rückgängig', () => handOut(id, false));
-  refresh();
+  const o = state.orders.find(x => x.id === id);
+  const missing = o ? Object.keys(STATIONS).filter(st => itemsFor(o, st).length && !o[st + '_done_at']) : [];
+  if (val && missing.length && !confirm(`Nr. ${id}: ${missing.map(st => STATIONS[st]).join(' und ')} noch nicht fertig. Trotzdem ausgegeben?`)) return;
+  await safe(async () => {
+    await db.updateOrder(id, { handed_out_at: val ? new Date().toISOString() : null });
+    if (val) toast(`Nr. ${id} ausgegeben`, 'Rückgängig', () => handOut(id, false));
+  });
 }
 
 async function undoLast() {
@@ -382,9 +401,10 @@ async function undoLast() {
 
 async function cancelOrder(id, skipAsk) {
   if (!skipAsk && !confirm(`Bestellung Nr. ${id} stornieren?`)) return;
-  await db.updateOrder(id, { cancelled: true });
-  toast(`Nr. ${id} storniert`, 'Doch nicht', async () => { await db.updateOrder(id, { cancelled: false }); refresh(); });
-  refresh();
+  await safe(async () => {
+    await db.updateOrder(id, { cancelled: true });
+    toast(`Nr. ${id} storniert`, 'Doch nicht', () => safe(() => db.updateOrder(id, { cancelled: false })));
+  });
 }
 
 // ---------- Stationen ----------
@@ -393,7 +413,7 @@ const itemsFor = (o, st) => o.items.filter(i => i.station === st);
 function renderStation(st) {
   const key = st + '_done_at';
   const mine = state.orders.filter(o => !o.cancelled && itemsFor(o, st).length);
-  const open = mine.filter(o => !o[key]);
+  const open = mine.filter(o => !o[key] && !o.handed_out_at);
   const done = mine.filter(o => o[key]).sort((a, b) => new Date(b[key]) - new Date(a[key])).slice(0, 4);
   const card = (o, finished) => {
     const other = o.items.filter(i => i.station !== st);
@@ -412,9 +432,14 @@ function renderStation(st) {
 }
 
 async function setDone(id, st, val) {
-  await db.updateOrder(id, { [st + '_done_at']: val ? new Date().toISOString() : null });
-  if (val) toast(`Nr. ${id} fertig, Nummer aufrufen`, 'Rückgängig', () => setDone(id, st, false));
-  refresh();
+  const o = state.orders.find(x => x.id === id);
+  const missing = o ? Object.keys(STATIONS).filter(s => s !== st && itemsFor(o, s).length && !o[s + '_done_at']) : [];
+  await safe(async () => {
+    await db.updateOrder(id, val ? { [st + '_done_at']: new Date().toISOString() } : { [st + '_done_at']: null, handed_out_at: null });
+    if (val) toast(missing.length
+      ? `Nr. ${id}: ${STATIONS[st]} fertig, ${missing.map(s => STATIONS[s]).join(' und ')} fehlt noch`
+      : `Nr. ${id} ist abholbereit`, 'Rückgängig', () => setDone(id, st, false));
+  });
 }
 
 // ---------- Sorten ----------
@@ -492,7 +517,9 @@ async function saveDraft() {
   if (!name) { draftError = 'Gib einen Namen ein.'; return render(); }
   if (price == null || isNaN(price) || price < 0) { draftError = 'Gib einen Preis ein, zum Beispiel 2,50.'; return render(); }
   const sort = draft.id ? draft.sort : Math.max(0, ...state.products.map(p => p.sort)) + 1;
-  await db.saveProduct({ id: draft.id, name, price: cents(price), station: draft.station, sort });
+  try {
+    await db.saveProduct({ id: draft.id, name, price: cents(price), station: draft.station, sort });
+  } catch (e) { draftError = 'Nicht gespeichert, keine Verbindung. Bitte nochmal.'; return render(); }
   toast(`„${esc(name)}“ gespeichert`);
   draft = null; draftError = '';
   document.activeElement?.blur();
@@ -502,25 +529,19 @@ async function saveDraft() {
 async function removeProduct(id) {
   const p = state.products.find(x => x.id === id);
   if (!confirm(`„${p.name}“ entfernen?`)) return;
-  await db.deleteProduct(id);
-  draft = null;
-  refresh();
+  await safe(async () => { await db.deleteProduct(id); draft = null; });
 }
 
 async function saveFloat(s) {
   const v = parseEuro(s);
   document.activeElement?.blur();
   if (v != null && (isNaN(v) || v < 0)) { toast('Betrag nicht lesbar, zum Beispiel 50,00.'); return render(); }
-  await db.saveFloat(cents(v || 0));
-  toast('Wechselgeld gespeichert');
-  refresh();
+  await safe(async () => { await db.saveFloat(cents(v || 0)); toast('Wechselgeld gespeichert'); });
 }
 
 async function clearAll() {
   if (!confirm('Wirklich alle Bestellungen löschen? Das geht nicht rückgängig.')) return;
-  await db.clearOrders();
-  lastOrder = null;
-  refresh();
+  await safe(async () => { await db.clearOrders(); lastOrder = null; toast('Alle Bestellungen gelöscht'); });
 }
 
 // ---------- Start ----------
