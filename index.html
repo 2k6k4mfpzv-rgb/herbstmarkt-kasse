@@ -146,7 +146,7 @@
 const CONFIG = { url: 'https://vlxakezdhoqosjpuvtdx.supabase.co', key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZseGFrZXpkaG9xb3NqcHV2dGR4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUxODEzNTAsImV4cCI6MjExMDc1NzM1MH0.W4X7RF2JTGesvnt2oLcA47wJ11qzGL1sV3smE5cgBPE' };
 
 // Bei jeder Änderung hochzählen: Geräte laden die neue Version dann von selbst.
-const VERSION = '10';
+const VERSION = '11';
 
 const STATIONS = { crepe: 'Crêpes', popcorn: 'Popcorn' };
 const eur = v => Number(v).toFixed(2).replace('.', ',') + ' €';
@@ -271,8 +271,8 @@ function render() {
 
 function renderCode() {
   return `<div class="panel" style="max-width:380px;margin:60px auto;position:static">
-    <div class="ptitle">Dieses iPad verbinden</div>
-    <p class="sub" style="margin:0 0 14px">Gib einmal den Stand-Code ein. Das iPad merkt ihn sich.</p>
+    <div class="ptitle">Dieses Gerät verbinden</div>
+    <p class="sub" style="margin:0 0 14px">Gib einmal den Stand-Code ein. Das Gerät merkt ihn sich.</p>
     <input id="codein" type="password" inputmode="numeric" placeholder="Stand-Code" onkeydown="if(event.key==='Enter')saveCode()">
     ${code() ? '<p class="err" style="margin-top:8px">Dieser Code stimmt nicht.</p>' : ''}
     <button class="btn main" onclick="saveCode()">Verbinden</button></div>`;
@@ -468,7 +468,7 @@ function renderSetup() {
   const perRows = Object.entries(per).sort((a, b) => b[1].qty - a[1].qty).map(([n, v]) => `
     <div class="row"><span>${esc(n)}</span><span class="right">${v.qty}× · ${eur(v.sum)}</span></div>`).join('');
 
-  return `<p class="sub" style="margin:4px 4px 0">Tippe eine Sorte an, um Name, Preis oder Station zu ändern. Änderungen erscheinen sofort auf allen iPads.</p>
+  return `<p class="sub" style="margin:4px 4px 0">Tippe eine Sorte an, um Name, Preis oder Station zu ändern. Änderungen erscheinen sofort auf allen Geräten.</p>
     ${sections}
     <h2>Kassensturz</h2>
     <div class="group" style="margin-bottom:10px">
@@ -482,7 +482,7 @@ function renderSetup() {
       <div class="stat"><span>Storniert</span><b>${state.orders.length - valid.length}</b></div>
     </div>
     ${perRows ? `<div class="group">${perRows}</div>` : ''}
-    <h2>Dieses iPad</h2>
+    <h2>Dieses Gerät</h2>
     <div class="group">
       ${online ? `<div class="row"><span>Stand-Code</span>
         <input type="password" value="${esc(code())}" onchange="localStorage.setItem('standcode',this.value);this.blur();refresh()" style="width:160px"></div>`
