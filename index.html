@@ -152,7 +152,7 @@ const local = {
       { id: 2, name: 'Zucker-Zimt', price: 2.5, station: 'crepe', sort: 2 },
       { id: 3, name: 'Apfelmus', price: 2.5, station: 'crepe', sort: 3 },
       { id: 4, name: 'Popcorn', price: 2, station: 'popcorn', sort: 4 }
-    ], orders: [], nextId: 5, nextOrder: 1
+    ], orders: [], float: 0, nextId: 5, nextOrder: 1
   },
   set: d => localStorage.setItem('demo', JSON.stringify(d)),
   change(fn) { const d = this.get(); const r = fn(d); this.set(d); return r; }
@@ -162,7 +162,8 @@ const db = online ? {
   load: async () => ({
     ok: await rest('rpc/stand_code_ok', { method: 'POST', body: '{}' }) || (() => { throw new Error('Stand-Code'); })(),
     products: await rest('products?select=*&order=sort,id'),
-    orders: await rest('orders?select=*&order=id')
+    orders: await rest('orders?select=*&order=id'),
+    float: Number((await rest('settings?select=float'))[0]?.float || 0)
   }),
   addOrder: async o => (await rest('orders', { method: 'POST', body: JSON.stringify(o) }))[0],
   updateOrder: (id, p) => rest('orders?id=eq.' + id, { method: 'PATCH', body: JSON.stringify(p) }),
@@ -170,7 +171,8 @@ const db = online ? {
     ? rest('products?id=eq.' + p.id, { method: 'PATCH', body: JSON.stringify({ name: p.name, price: p.price, station: p.station }) })
     : rest('products', { method: 'POST', body: JSON.stringify({ name: p.name, price: p.price, station: p.station, sort: p.sort }) }),
   deleteProduct: id => rest('products?id=eq.' + id, { method: 'DELETE' }),
-  clearOrders: () => rest('rpc/reset_orders', { method: 'POST', body: '{}' })
+  clearOrders: () => rest('rpc/reset_orders', { method: 'POST', body: '{}' }),
+  saveFloat: v => rest('settings?id=eq.1', { method: 'PATCH', body: JSON.stringify({ float: v }) })
 } : {
   load: async () => local.get(),
   addOrder: async o => local.change(d => { const n = { ...o, id: d.nextOrder++, created_at: new Date().toISOString() }; d.orders.push(n); return n; }),
@@ -180,7 +182,8 @@ const db = online ? {
     else d.products.push({ ...p, id: d.nextId++ });
   }),
   deleteProduct: async id => local.change(d => { d.products = d.products.filter(x => x.id !== id); }),
-  clearOrders: async () => local.change(d => { d.orders = []; d.nextOrder = 1; })
+  clearOrders: async () => local.change(d => { d.orders = []; d.nextOrder = 1; }),
+  saveFloat: async v => local.change(d => { d.float = v; })
 };
 
 // ---------- Zustand ----------
@@ -273,7 +276,7 @@ function renderPanel() {
     <button class="btn ghost" style="margin-top:12px" onclick="undoLast()">Rückgängig</button></div>`;
   if (!cart.length) return `<div class="panel"><p class="hint">Tippe links eine Sorte an.</p></div>`;
   const total = cartTotal();
-  const notes = [5, 10, 20, 50].filter(v => v > total);
+  const notes = [5, 10, 15, 20, 25, 50].filter(v => v > total);
   const custom = given != null && given !== total && !notes.includes(given);
   return `<div class="panel">
     <div class="ptitle">Bestellung</div>
@@ -394,14 +397,20 @@ function renderSetup() {
     per[i.name] = per[i.name] || { qty: 0, sum: 0 };
     per[i.name].qty += i.qty; per[i.name].sum += i.qty * i.price;
   }));
+  const income = cents(valid.reduce((s, o) => s + Number(o.total), 0));
   const perRows = Object.entries(per).sort((a, b) => b[1].qty - a[1].qty).map(([n, v]) => `
     <div class="row"><span>${esc(n)}</span><span class="right">${v.qty}× · ${eur(v.sum)}</span></div>`).join('');
 
   return `<p class="sub" style="margin:4px 4px 0">Tippe eine Sorte an, um Name, Preis oder Station zu ändern. Änderungen erscheinen sofort auf allen iPads.</p>
     ${sections}
     <h2>Kassensturz</h2>
+    <div class="group" style="margin-bottom:10px">
+      <div class="row"><div>Wechselgeld am Anfang<small>Was vor dem ersten Verkauf schon in der Kasse liegt.</small></div>
+        <input inputmode="decimal" placeholder="0,00" value="${state.float ? Number(state.float).toFixed(2).replace('.', ',') : ''}" onchange="saveFloat(this.value)" style="width:120px;text-align:right"></div>
+    </div>
     <div class="stats">
-      <div class="stat"><span>In der Kasse sollten sein</span><b>${eur(cents(valid.reduce((s, o) => s + Number(o.total), 0)))}</b></div>
+      <div class="stat"><span>In der Kasse sollten sein</span><b>${eur(cents((state.float || 0) + income))}</b></div>
+      <div class="stat"><span>Einnahmen</span><b>${eur(income)}</b></div>
       <div class="stat"><span>Bestellungen</span><b>${valid.length}</b></div>
       <div class="stat"><span>Storniert</span><b>${state.orders.length - valid.length}</b></div>
     </div>
@@ -456,6 +465,15 @@ async function removeProduct(id) {
   if (!confirm(`„${p.name}“ entfernen?`)) return;
   await db.deleteProduct(id);
   draft = null;
+  refresh();
+}
+
+async function saveFloat(s) {
+  const v = parseEuro(s);
+  document.activeElement?.blur();
+  if (v != null && (isNaN(v) || v < 0)) { toast('Betrag nicht lesbar, zum Beispiel 50,00.'); return render(); }
+  await db.saveFloat(cents(v || 0));
+  toast('Wechselgeld gespeichert');
   refresh();
 }
 

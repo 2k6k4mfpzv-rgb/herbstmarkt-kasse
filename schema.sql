@@ -46,5 +46,12 @@ revoke all on config from anon, authenticated;
 grant select, insert, update, delete on products, orders to anon;
 grant execute on function stand_code_ok(), reset_orders() to anon;
 
+-- Wechselgeld am Anfang (eine Zeile, ergänzt 20.11.2026)
+create table settings (id int primary key default 1 check (id = 1), float numeric(8,2) not null default 0);
+alter table settings enable row level security;
+create policy stand on settings for all to anon using (stand_code_ok()) with check (stand_code_ok());
+grant select, update on settings to anon;
+insert into settings default values;
+
 -- Stand-Code festlegen (nicht hier im Code speichern, beim Ausführen eintragen):
 -- insert into config values ('DEIN-CODE');
