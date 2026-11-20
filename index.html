@@ -46,7 +46,7 @@
   .tname { font-size: 19px; font-weight: 600; line-height: 1.2; }
   .tprice { font-size: 15px; color: var(--sub); margin-top: auto; }
   .badge { position: absolute; top: 10px; right: 10px; min-width: 26px; height: 26px; padding: 0 7px; border-radius: 13px; background: var(--ink); color: #fff; font-size: 14px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
-  .panel { position: sticky; top: 72px; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 16px; }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 16px; }
   .ptitle { font-size: 13px; font-weight: 600; color: var(--sub); margin: 0 0 8px; }
   .line { display: grid; grid-template-columns: 30px minmax(0,1fr) auto 34px 34px; align-items: center; gap: 6px; padding: 4px 0; font-size: 16px; }
   .qty { font-weight: 600; } .lname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .lprice { color: var(--sub); font-variant-numeric: tabular-nums; }
@@ -66,6 +66,13 @@
   .btn.dark { background: var(--ink); color: #fff; }
   .btn.inline { display: inline-block; width: auto; padding: 9px 14px; }
   .danger { color: var(--red); }
+  .run { align-items: flex-start; }
+  .run.ready { background: var(--greenbg); }
+  .pills { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 4px; }
+  .pill { font-size: 13px; font-weight: 500; padding: 3px 8px; border-radius: 6px; background: var(--popcornbg); color: #7a5d00; }
+  .pill.ok { background: var(--greenbg); color: var(--green); }
+  .run.ready .pill.ok { background: var(--green); color: #fff; }
+  .acts { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
   .bignr { font-size: 54px; font-weight: 700; line-height: 1.05; margin: 2px 0 6px; font-variant-numeric: tabular-nums; }
   .sub { color: var(--sub); font-size: 15px; }
 
@@ -102,6 +109,18 @@
 
   .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 10; display: flex; align-items: center; gap: 14px; padding: 12px 12px 12px 18px; border-radius: 14px; background: var(--ink); color: #fff; font-size: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); white-space: nowrap; }
   .toast button { background: #fff; color: var(--ink); border-radius: 10px; padding: 8px 12px; font-weight: 600; }
+  @media (max-width: 560px) {
+    main { padding: 10px; }
+    .tiles { grid-template-columns: repeat(auto-fill, minmax(105px, 1fr)); gap: 8px; }
+    .tile { min-height: 68px; padding: 10px 28px 10px 12px; border-radius: 13px; gap: 3px; }
+    .tname { font-size: 16px; } .tprice { font-size: 14px; }
+    .badge { top: 6px; right: 6px; min-width: 22px; height: 22px; font-size: 13px; }
+    h2 { margin: 14px 4px 6px; }
+    .panel { padding: 14px; } .total { margin: 6px 0 12px; } .total b { font-size: 24px; }
+    .chip { padding: 8px 11px; font-size: 15px; }
+    .btn.main { margin-top: 10px; padding: 14px; }
+    .orders { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
@@ -256,14 +275,24 @@ function renderKasse() {
         <span class="tname">${esc(p.name)}</span><span class="tprice">${eur(p.price)}</span></button>`;
     }).join('')}</div>`;
   }).join('');
-  const recent = state.orders.filter(o => !o.cancelled).slice(-5).reverse().map(o => `
-    <div class="row"><div>Nr. ${o.id} <span class="sub">· ${eur(o.total)}</span>
-      <small>${time(o.created_at)} · ${o.items.map(i => i.qty + '× ' + esc(i.name)).join(', ')}</small></div>
-      <button class="btn inline danger" onclick="cancelOrder(${o.id})">Stornieren</button></div>`).join('');
+  const ready = o => Object.keys(STATIONS).every(st => !itemsFor(o, st).length || o[st + '_done_at']);
+  const running = state.orders.filter(o => !o.cancelled && !o.handed_out_at)
+    .sort((a, b) => ready(b) - ready(a) || a.id - b.id);
+  const readyCount = running.filter(ready).length;
+  const rows = running.map(o => `
+    <div class="row run ${ready(o) ? 'ready' : ''}"><div>
+      <b>Nr. ${o.id}</b> <span class="sub">· ${eur(o.total)}</span>
+      <div class="pills">${ready(o) ? '<span class="pill ok">Abholbereit</span>' : Object.entries(STATIONS)
+        .filter(([st]) => itemsFor(o, st).length)
+        .map(([st, l]) => `<span class="pill ${o[st + '_done_at'] ? 'ok' : ''}">${l} ${o[st + '_done_at'] ? 'fertig' : 'in Arbeit'}</span>`).join('')}</div>
+      <small>${o.items.map(i => i.qty + '× ' + esc(i.name)).join(', ')}</small></div>
+      <div class="acts">${ready(o) ? `<button class="btn inline dark" onclick="handOut(${o.id},true)">Ausgegeben</button>` : ''}
+        <button class="btn inline danger" onclick="cancelOrder(${o.id})">Stornieren</button></div></div>`).join('');
   return `<div class="kasse">
     <div>${groups || '<p class="hint">Noch keine Sorten. Leg sie unter „Sorten“ an.</p>'}</div>
     <div>${renderPanel()}
-      ${recent ? `<h2>Letzte Bestellungen</h2><div class="group">${recent}</div>` : ''}
+      <h2>Laufende Bestellungen${readyCount ? ` · <span style="color:var(--green)">${readyCount} abholbereit</span>` : ''}</h2>
+      ${rows ? `<div class="group">${rows}</div>` : '<p class="sub" style="margin:0 4px">Keine offenen Bestellungen.</p>'}
     </div></div>`;
 }
 
@@ -335,6 +364,12 @@ async function placeOrder() {
   sending = false;
   document.activeElement?.blur();
   render(); refresh();
+}
+
+async function handOut(id, val) {
+  await db.updateOrder(id, { handed_out_at: val ? new Date().toISOString() : null });
+  if (val) toast(`Nr. ${id} ausgegeben`, 'Rückgängig', () => handOut(id, false));
+  refresh();
 }
 
 async function undoLast() {

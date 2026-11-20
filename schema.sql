@@ -53,5 +53,8 @@ create policy stand on settings for all to anon using (stand_code_ok()) with che
 grant select, update on settings to anon;
 insert into settings default values;
 
+-- Bestellung an den Kunden ausgegeben (ergänzt 20.11.2026)
+alter table orders add column handed_out_at timestamptz;
+
 -- Stand-Code festlegen (nicht hier im Code speichern, beim Ausführen eintragen):
 -- insert into config values ('DEIN-CODE');
